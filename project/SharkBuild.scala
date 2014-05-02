@@ -35,24 +35,28 @@ object SharkBuild extends Build {
 
   val HIVE_VERSION = "0.11.0-shark-0.9.1"
 
-  val SPARK_VERSION = "0.9.0-incubating"
+  val SPARK_VERSION = "0.9.1"
 
   val SCALA_VERSION = "2.10.3"
+
+  val SCALAC_JVM_VERSION = "jvm-1.6"
+  val JAVAC_JVM_VERSION = "1.6"
 
   // Hadoop version to build against. For example, "0.20.2", "0.20.205.0", or
   // "1.0.1" for Apache releases, or "0.20.2-cdh3u3" for Cloudera Hadoop.
   val DEFAULT_HADOOP_VERSION = "1.0.4"
 
-  lazy val hadoopVersion = env("SHARK_HADOOP_VERSION") orElse
-                           env("SPARK_HADOOP_VERSION") getOrElse
-                           DEFAULT_HADOOP_VERSION
+  lazy val sparkVersion = env("SPARK_VERSION").getOrElse(SPARK_VERSION)
+
+  lazy val hadoopVersion = env("SHARK_HADOOP_VERSION").getOrElse(
+    env("SPARK_HADOOP_VERSION").getOrElse(DEFAULT_HADOOP_VERSION))
 
   // Whether to build Shark with Yarn support
   val YARN_ENABLED = env("SHARK_YARN").getOrElse("false").toBoolean
 
   // Whether to build Shark with Tachyon jar.
   val TACHYON_ENABLED = true
-  val TACHYON_VERSION = "0.4.0"
+  val TACHYON_VERSION = "0.4.1"
 
   lazy val root = Project(
     id = "root",
@@ -74,9 +78,12 @@ object SharkBuild extends Build {
   val excludeServlet = ExclusionRule(organization = "javax.servlet")
   val excludeXerces = ExclusionRule(organization = "xerces")
 
+  val scalaArtifacts = Seq("jline", "scala-compiler", "scala-library", "scala-reflect")
+  val scalaDependencies = scalaArtifacts.map ( artifactId =>
+    "org.scala-lang" % artifactId % SCALA_VERSION)
+
   // TODO(harvey): These should really be in a SharkHive project, but that requires re-organizing
-  //               all of our settings. Should be done for v0.9.1. Also, we might not need some
-  //               of these jars.
+  //               all of our settings. Also, we might not need some of these jars.
   val hiveArtifacts = Seq(
     "hive-anttasks",
     "hive-beeline",
@@ -103,7 +110,7 @@ object SharkBuild extends Build {
   }).toSeq
 
   val yarnDependency = (if (YARN_ENABLED) {
-    Some("org.apache.spark" %% "spark-yarn" % SPARK_VERSION)
+    Some("org.apache.spark" %% "spark-yarn" % sparkVersion)
   } else {
     None
   }).toSeq
@@ -114,7 +121,9 @@ object SharkBuild extends Build {
     organization := SHARK_ORGANIZATION,
     version := SHARK_VERSION,
     scalaVersion := SCALA_VERSION,
-    scalacOptions := Seq("-deprecation", "-unchecked", "-optimize", "-feature", "-Yinline-warnings"),
+    scalacOptions := Seq("-deprecation", "-unchecked", "-optimize", "-feature",
+      "-Yinline-warnings", "-target:" + SCALAC_JVM_VERSION),
+    javacOptions := Seq("-target", JAVAC_JVM_VERSION, "-source", JAVAC_JVM_VERSION),
     parallelExecution in Test := false,
 
     // Download managed jars into lib_managed.
@@ -127,7 +136,7 @@ object SharkBuild extends Build {
       "Sonatype Testing" at "https://oss.sonatype.org/content/repositories/eduberkeleycs-1016",
       "Local Maven" at Path.userHome.asFile.toURI.toURL + ".m2/repository"
     ),
- 
+
     publishTo <<= version { (v: String) =>
       val nexus = "https://oss.sonatype.org/"
       if (v.trim.endsWith("SNAPSHOT"))
@@ -183,12 +192,13 @@ object SharkBuild extends Build {
     },
 
     unmanagedJars in Test ++= Seq(
-      file(System.getenv("HIVE_DEV_HOME")) / "build" / "ql" / "test" / "classes"
+      file(System.getenv("HIVE_DEV_HOME")) / "build" / "ql" / "test" / "classes",
+      file(System.getenv("HIVE_DEV_HOME")) / "build/ivy/lib/test/hadoop-test-0.20.2.jar"
     ),
-    libraryDependencies ++= hiveDependencies ++ tachyonDependency ++ yarnDependency,
+    libraryDependencies ++= hiveDependencies ++ scalaDependencies ++ tachyonDependency ++ yarnDependency,
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-core" % SPARK_VERSION,
-      "org.apache.spark" %% "spark-repl" % SPARK_VERSION,
+      "org.apache.spark" %% "spark-core" % sparkVersion,
+      "org.apache.spark" %% "spark-repl" % sparkVersion,
       "com.google.guava" % "guava" % "14.0.1",
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion excludeAll(excludeJackson, excludeNetty, excludeAsm) force(),
       // See https://code.google.com/p/guava-libraries/issues/detail?id=1095
@@ -200,7 +210,6 @@ object SharkBuild extends Build {
       "commons-httpclient" % "commons-httpclient" % "3.1" % "test",
 
       // Test infrastructure
-      "org.apache.hadoop" % "hadoop-test" % "0.20.2" % "test" excludeAll(excludeJackson, excludeNetty, excludeAsm) force(),
       "org.scalatest" %% "scalatest" % "1.9.1" % "test",
       "junit" % "junit" % "4.10" % "test",
       "net.java.dev.jets3t" % "jets3t" % "0.7.1",
